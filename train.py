@@ -1,19 +1,23 @@
-import os, math, time, json, argparse, random
-from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional
+import argparse
+import json
+import math
+import os
+import random
+import time
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL import Image
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
-
-from torchvision import transforms, utils as tv_utils
+from torchvision import transforms
+from torchvision import utils as tv_utils
 from torchvision.datasets import ImageFolder
-from torchvision.models import resnet50, ResNet50_Weights
-
-from PIL import Image
+from torchvision.models import ResNet50_Weights, resnet50
 from tqdm.auto import tqdm
 
 try:
@@ -45,15 +49,10 @@ def save_ckpt(path: str, model, opt, scaler, scheduler, epoch: int, step: int, b
         "args": args,
     }, path)
 
-class ProofOfQuality:
+class ProofOfQuality: #фоточки на защиту
     def __init__(self, out_dir: str):
         self.out_dir = os.path.join(out_dir, "quality_proof")
         os.makedirs(self.out_dir, exist_ok=True)
-        self.log_file = os.path.join(self.out_dir, "q_logs.csv")
-        if not os.path.isfile(self.log_file):
-            with open(self.log_file, "w", encoding="utf-8") as f:
-                f.write("step,avg_q,min_q,max_q,margin_mean\n")
-
     def save_visual_samples(self, images: torch.Tensor, q: torch.Tensor, step: int):
         # images: [B, 3, 112, 112], q: [B]
         images = images.detach().cpu()
@@ -64,10 +63,6 @@ class ProofOfQuality:
         tv_utils.save_image(worst, os.path.join(self.out_dir, f"step_{step}_low_q.jpg"), nrow=4)
         tv_utils.save_image(best,  os.path.join(self.out_dir, f"step_{step}_high_q.jpg"), nrow=4)
 
-    def append_csv(self, step: int, avg_q: float, min_q: float, max_q: float, margin_mean: float):
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(f"{step},{avg_q:.6f},{min_q:.6f},{max_q:.6f},{margin_mean:.6f}\n")
-
 def apply_corruption_tensor(x: torch.Tensor, corruption: str) -> torch.Tensor:
     # x: [B, 3, 112, 112]
     if corruption == "none": return x
@@ -77,8 +72,6 @@ def apply_corruption_tensor(x: torch.Tensor, corruption: str) -> torch.Tensor:
     if corruption == "blur":
         return F.avg_pool2d(x, kernel_size=3, stride=1, padding=1) # [B, 3, 112, 112]
     return x
-
-# ===================== Model =====================
 
 class ResNet50Embed(nn.Module):
     def __init__(self, d=512):
@@ -151,8 +144,6 @@ class FaceNet(nn.Module):
         logits = self.head(f_raw, y, q=q, use_q_margin=use_q_margin) # [B, C]
         return logits, f_raw, f_norm, q
 
-# ===================== Eval Logic =====================
-
 @dataclass
 class MS1MPair:
     i1: int; i2: int; same: int
@@ -182,8 +173,6 @@ def ms1m_verif_eval(model: FaceNet, ds_full, pairs: List[MS1MPair], device, corr
         acc = ((sims_t >= th).long() == labs_t).float().mean().item()
         if acc > best_acc: best_acc = acc
     return {"acc": best_acc, "mean_pos": sims_t[labs_t==1].mean().item(), "mean_neg": sims_t[labs_t==0].mean().item()}
-
-# ===================== Main =====================
 
 def main():
     ap = argparse.ArgumentParser()
